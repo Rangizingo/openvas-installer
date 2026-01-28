@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code when working with this repository.
 
+## Workflow Rules (CRITICAL)
+- Always run /work command when making any changes, no matter how small
+- Always create tasks using TaskCreate/TaskUpdate for tracking
+
 ## Project Overview
 
 **openvas-installer** - One-stop PowerShell script to deploy OpenVAS (Greenbone Vulnerability Manager) on Windows machines.
@@ -23,13 +27,29 @@ Automate complete OpenVAS setup:
 ## Architecture
 
 ```
-install-openvas.ps1
+install-openvas.ps1          # OpenVAS Docker deployment
 ├── Prerequisites check (Docker, WSL2, Chocolatey)
 ├── Install missing components via Chocolatey
 ├── Pull OpenVAS Docker image
 ├── Configure container with default volumes
 ├── Start services
 └── Display access credentials
+
+scan-network.ps1             # Network auto-scanner (CLI + dot-sourceable)
+├── Get-VPNAdapters          # Detects NordLynx, WireGuard, OpenVPN, etc.
+├── Get-LocalSubnets         # Auto-discover subnets, exclude VPN/Docker/WSL
+├── Find-LiveHosts           # nmap ping scan (--min-rate 1000 for large subnets)
+├── Invoke-GMP               # GMP API via TLS on port 9390
+├── New-OpenVASTarget        # Create scan target from discovered hosts
+├── New-OpenVASScan          # Create scan task with config
+└── Start-OpenVASScan        # Launch scan
+
+scan-network-gui.ps1         # WinForms GUI (dot-sources scan-network.ps1)
+├── Scan mode: Auto-Discover / Manual / Full Sweep
+├── Config dropdown: Full and fast / Full and very deep / Discovery
+├── Exclusion checkboxes: VPN, Docker/WSL, min-rate
+├── BackgroundWorker for async scan execution
+└── Dark theme (#1e1e2e background)
 ```
 
 ## Commands
@@ -43,6 +63,14 @@ install-openvas.ps1
 
 # Uninstall
 .\install-openvas.ps1 -Uninstall
+
+# Network scanner (CLI)
+.\scan-network.ps1
+.\scan-network.ps1 -ExcludeSubnets "172.17.0.0/16" -ScanConfig full_deep
+
+# Network scanner (GUI)
+.\scan-network.ps1 -GUI
+.\scan-network-gui.ps1
 ```
 
 ## Key Design Decisions
@@ -64,4 +92,5 @@ install-openvas.ps1
 - Docker Desktop
 - WSL2 (Windows Subsystem for Linux)
 - Chocolatey package manager
-- Greenbone Community Container (Docker image)
+- Greenbone Community Container (Docker image: immauss/openvas)
+- nmap (auto-installed via Chocolatey by scan-network.ps1)
