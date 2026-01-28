@@ -55,7 +55,7 @@ The script will:
 
 ## After Installation
 
-1. Open https://localhost:9392 in your browser
+1. Open http://localhost:9392 in your browser
 2. Accept the self-signed certificate warning
 3. Login with credentials displayed at end of install
 4. **Change the admin password immediately**

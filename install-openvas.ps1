@@ -365,7 +365,7 @@ OpenVAS Admin Credentials
 Username: admin
 Password: $password
 
-Web UI: https://localhost:9392
+Web UI: http://localhost:9392
 Generated: $(Get-Date)
 
 IMPORTANT: Change this password after first login!
@@ -375,7 +375,7 @@ IMPORTANT: Change this password after first login!
     Write-Log "OpenVAS Installation Complete!" -Level SUCCESS
     Write-Log "========================================" -Level SUCCESS
     Write-Log ""
-    Write-Log "Web UI: https://localhost:9392" -Level INFO
+    Write-Log "Web UI: http://localhost:9392" -Level INFO
     Write-Log "Username: admin" -Level INFO
     Write-Log "Password: $password" -Level INFO
     Write-Log ""
@@ -506,7 +506,7 @@ function Main {
     }
 
     Write-Log ""
-    Write-Log "Installation complete! Open https://localhost:9392 in your browser." -Level SUCCESS
+    Write-Log "Installation complete! Open http://localhost:9392 in your browser." -Level SUCCESS
 }
 
 Main
