@@ -30,7 +30,8 @@ param(
     [switch]$SkipDiscovery,
     [string]$ExcludeSubnets = "",
     [ValidateSet("full_fast", "full_deep", "discovery")]
-    [string]$ScanConfig = "full_fast"
+    [string]$ScanConfig = "full_fast",
+    [switch]$GUI
 )
 
 $ErrorActionPreference = "Stop"
@@ -94,6 +95,31 @@ function Test-OpenVAS {
 #endregion
 
 #region Network Discovery
+function Get-VPNAdapters {
+    Write-Log "Detecting VPN adapters..."
+
+    $vpnKeywords = @(
+        "NordLynx", "OpenVPN", "WireGuard", "Mullvad",
+        "ProtonVPN", "Windscribe", "TAP-", "TUN-"
+    )
+
+    $vpnAdapters = @()
+
+    $allAdapters = Get-NetAdapter | Where-Object { $_.Status -eq "Up" }
+
+    foreach ($adapter in $allAdapters) {
+        foreach ($keyword in $vpnKeywords) {
+            if ($adapter.Name -like "*$keyword*" -or $adapter.InterfaceDescription -like "*$keyword*") {
+                $vpnAdapters += $adapter
+                Write-Log "Found VPN adapter: $($adapter.Name)" -Level WARN
+                break
+            }
+        }
+    }
+
+    return $vpnAdapters
+}
+
 function Get-LocalSubnets {
     Write-Log "Detecting local subnets..."
 
@@ -109,6 +135,17 @@ function Get-LocalSubnets {
         "127."                                          # Loopback
     )
 
+    # Get VPN adapters and add their IPs to excludes
+    $vpnAdapters = Get-VPNAdapters
+    $vpnIPs = @()
+    foreach ($vpnAdapter in $vpnAdapters) {
+        $vpnIP = Get-NetIPAddress -InterfaceIndex $vpnAdapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue
+        if ($vpnIP) {
+            $vpnIPs += $vpnIP.IPAddress
+            Write-Log "Excluding VPN subnet: $($vpnIP.IPAddress)/$($vpnIP.PrefixLength)" -Level WARN
+        }
+    }
+
     $subnets = @()
 
     $adapters = Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
@@ -120,39 +157,46 @@ function Get-LocalSubnets {
         $ip = $adapter.IPAddress
         $prefix = $adapter.PrefixLength
 
-        # Check default excludes
+        # Check VPN excludes
         $skip = $false
-        foreach ($exclude in $defaultExcludes) {
-            if ($ip.StartsWith($exclude)) {
-                Write-Log "Skipping virtual network: $ip/$prefix" -Level WARN
-                $skip = $true
-                break
+        if ($vpnIPs -contains $ip) {
+            Write-Log "Skipping VPN network: $ip/$prefix" -Level WARN
+            $skip = $true
+        }
+
+        # Check default excludes
+        if (-not $skip) {
+            foreach ($exclude in $defaultExcludes) {
+                if ($ip.StartsWith($exclude)) {
+                    Write-Log "Skipping virtual network: $ip/$prefix" -Level WARN
+                    $skip = $true
+                    break
+                }
             }
         }
 
         # Check user excludes
-        foreach ($exclude in $excludeList) {
-            $excludeNet = $exclude -replace "/\d+$", ""
-            if ($ip.StartsWith($excludeNet.TrimEnd(".0"))) {
-                Write-Log "Skipping excluded network: $ip/$prefix" -Level WARN
-                $skip = $true
-                break
+        if (-not $skip) {
+            foreach ($exclude in $excludeList) {
+                $excludeNet = $exclude -replace "/\d+$", ""
+                if ($ip.StartsWith($excludeNet.TrimEnd(".0"))) {
+                    Write-Log "Skipping excluded network: $ip/$prefix" -Level WARN
+                    $skip = $true
+                    break
+                }
             }
         }
 
         if (-not $skip) {
-            # Calculate network address
-            $ipBytes = [System.Net.IPAddress]::Parse($ip).GetAddressBytes()
-            $maskBits = $prefix
-            $mask = [uint32]((-bnot 0) -shl (32 - $maskBits))
-            $maskBytes = [BitConverter]::GetBytes($mask)
-            [Array]::Reverse($maskBytes)
-
-            $netBytes = @()
-            for ($i = 0; $i -lt 4; $i++) {
-                $netBytes += ($ipBytes[$i] -band $maskBytes[$i])
+            # Calculate network address using simple approach
+            $ipParts = $ip.Split(".")
+            $network = switch ([int][Math]::Ceiling($prefix / 8)) {
+                1 { "$($ipParts[0]).0.0.0/$prefix" }
+                2 { "$($ipParts[0]).$($ipParts[1]).0.0/$prefix" }
+                3 { "$($ipParts[0]).$($ipParts[1]).$($ipParts[2]).0/$prefix" }
+                4 { "$ip/$prefix" }
+                default { "$($ipParts[0]).$($ipParts[1]).$($ipParts[2]).0/$prefix" }
             }
-            $network = ($netBytes -join ".") + "/$prefix"
 
             if ($network -notin $subnets) {
                 $subnets += $network
@@ -180,7 +224,19 @@ function Find-LiveHosts {
             $nmapPath = "nmap"
         }
 
-        $result = & $nmapPath -sn -T4 $subnet 2>&1
+        # Add --min-rate for larger subnets (prefix <= 24)
+        $nmapArgs = @("-sn", "-T4")
+        if ($subnet -match "/(\d+)$") {
+            $prefixLen = [int]$Matches[1]
+            if ($prefixLen -le 24) {
+                $nmapArgs += "--min-rate"
+                $nmapArgs += "1000"
+                Write-Log "Using --min-rate 1000 for large subnet" -Level INFO
+            }
+        }
+        $nmapArgs += $subnet
+
+        $result = & $nmapPath $nmapArgs 2>&1
 
         # Parse nmap output for IPs
         $hosts = $result | Select-String -Pattern "Nmap scan report for (\S+)" | ForEach-Object {
@@ -227,8 +283,8 @@ function Invoke-GMP {
         [hashtable]$Credentials
     )
 
-    # Execute GMP command inside container
-    $xml = docker exec openvas gvm-cli --gmp-username $Credentials.Username --gmp-password $Credentials.Password socket --xml "$Command" 2>&1
+    # Execute GMP command inside container using TLS
+    $xml = docker exec openvas gvm-cli tls --hostname 127.0.0.1 --port 9390 --gmp-username $Credentials.Username --gmp-password $Credentials.Password --xml "$Command" 2>&1
     return $xml
 }
 
@@ -438,5 +494,22 @@ function Main {
     }
 }
 
-Main
+# Only run Main if not dot-sourced
+if ($MyInvocation.InvocationName -ne '.') {
+    if ($GUI) {
+        # Launch GUI from same directory
+        $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+        $guiScript = Join-Path $scriptDir "scan-network-gui.ps1"
+
+        if (Test-Path $guiScript) {
+            Write-Log "Launching GUI..." -Level INFO
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $guiScript
+        } else {
+            Write-Log "GUI script not found at: $guiScript" -Level ERROR
+            exit 1
+        }
+    } else {
+        Main
+    }
+}
 #endregion
