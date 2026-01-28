@@ -281,17 +281,17 @@ version: '3.8'
 
 services:
   openvas:
-    image: greenbone/community-container
+    image: immauss/openvas:latest
     container_name: openvas
     restart: unless-stopped
     ports:
       - "9392:9392"
       - "9390:9390"
     volumes:
-      - openvas_data:/var/lib/gvm
-      - openvas_logs:/var/log/gvm
+      - openvas_data:/data
     environment:
       - PASSWORD=PLACEHOLDER_PASSWORD
+      - USERNAME=admin
     deploy:
       resources:
         limits:
@@ -299,7 +299,6 @@ services:
 
 volumes:
   openvas_data:
-  openvas_logs:
 "@
 }
 
@@ -313,8 +312,8 @@ function Install-OpenVAS {
     }
 
     # Pull image
-    Write-Log "Pulling Greenbone Community Container (this may take several minutes)..."
-    docker pull greenbone/community-container
+    Write-Log "Pulling OpenVAS container (this may take several minutes)..."
+    docker pull immauss/openvas:latest
     if ($LASTEXITCODE -ne 0) {
         Write-Log "Failed to pull container image" -Level ERROR
         return $false
