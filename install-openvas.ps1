@@ -169,7 +169,17 @@ function Install-WSL2 {
         # Set WSL2 as default
         wsl --set-default-version 2 2>&1 | Out-Null
 
-        Write-Log "WSL2 installation initiated. A restart may be required." -Level WARN
+        Write-Log "WSL2 installation initiated." -Level SUCCESS
+
+        # Check if this is a fresh WSL2 install that needs restart
+        $wslCheck = wsl --version 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Log "RESTART REQUIRED: WSL2 was just enabled. Please restart Windows and run this script again." -Level ERROR
+            Write-Host ""
+            Write-Host "Press any key to exit..." -ForegroundColor Yellow
+            $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+            exit 0
+        }
         return $true
     }
     catch {
