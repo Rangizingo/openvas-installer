@@ -108,7 +108,7 @@ $lblConfig.ForeColor = $fgColor
 $form.Controls.Add($lblConfig)
 
 $cboScanConfig = New-Object System.Windows.Forms.ComboBox
-$cboScanConfig.Location = New-Object System.Drawing.Point(140, $yPos - 3)
+$cboScanConfig.Location = New-Object System.Drawing.Point(140, ([int]$yPos - 3))
 $cboScanConfig.Size = New-Object System.Drawing.Size(340, 25)
 $cboScanConfig.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
 $cboScanConfig.BackColor = $controlBg

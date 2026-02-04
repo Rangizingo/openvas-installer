@@ -283,9 +283,26 @@ function Invoke-GMP {
         [hashtable]$Credentials
     )
 
-    # Execute GMP command inside container using TLS
-    $xml = docker exec openvas gvm-cli tls --hostname 127.0.0.1 --port 9390 --gmp-username $Credentials.Username --gmp-password $Credentials.Password --xml "$Command" 2>&1
-    return $xml
+    # Flatten XML to single line
+    $flatXml = ($Command -replace "`r`n", "" -replace "`n", "" -replace "\s+", " ").Trim()
+
+    # Execute via Start-Process to capture output properly
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = "docker"
+    $psi.Arguments = "exec -u gvm openvas gvm-cli --gmp-username $($Credentials.Username) --gmp-password $($Credentials.Password) tls --hostname 127.0.0.1 --port 9390 --xml `"$flatXml`""
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $psi
+    $process.Start() | Out-Null
+    $stdout = $process.StandardOutput.ReadToEnd()
+    $stderr = $process.StandardError.ReadToEnd()
+    $process.WaitForExit()
+
+    return $stdout
 }
 
 function New-OpenVASTarget {
@@ -315,14 +332,14 @@ function New-OpenVASTarget {
 <create_target>
   <name>$Name</name>
   <hosts>$hostList</hosts>
-  <port_list id="$portListId"/>
+  <port_list id='$portListId'/>
   <alive_tests>Consider Alive</alive_tests>
 </create_target>
 "@
 
     $result = Invoke-GMP -Command $createCmd -Credentials $Credentials
 
-    if ($result -match 'id="([a-f0-9-]+)".*status="201"') {
+    if ($result -match 'status="201".*id="([a-f0-9-]+)"') {
         $targetId = $Matches[1]
         Write-Log "Target created: $targetId" -Level SUCCESS
         return $targetId
@@ -338,7 +355,7 @@ function Get-ScanConfigId {
         [hashtable]$Credentials
     )
 
-    $configsXml = Invoke-GMP -Command "<get_scan_configs/>" -Credentials $Credentials
+    $configsXml = Invoke-GMP -Command "<get_configs/>" -Credentials $Credentials
 
     $searchName = switch ($ConfigName) {
         "full_fast" { "Full and fast" }
@@ -363,12 +380,25 @@ function Get-ScannerId {
 
     $scannersXml = Invoke-GMP -Command "<get_scanners/>" -Credentials $Credentials
 
-    if ($scannersXml -match 'scanner id="([^"]+)"[^>]*>.*?<name>OpenVAS Default</name>') {
-        return $Matches[1]
+    # Find scanner blocks and look for OpenVAS Default
+    $allMatches = [regex]::Matches($scannersXml, '<scanner id="([^"]+)">.*?</scanner>')
+    foreach ($m in $allMatches) {
+        $block = $m.Value
+        if ($block -match '<name>OpenVAS Default</name>') {
+            if ($block -match '<scanner id="([^"]+)">') {
+                return $Matches[1]
+            }
+        }
     }
 
-    if ($scannersXml -match 'scanner id="([^"]+)"') {
-        return $Matches[1]
+    # Fallback: look for type 2 scanner (OSP/OpenVAS)
+    foreach ($m in $allMatches) {
+        $block = $m.Value
+        if ($block -match '<type>2</type>') {
+            if ($block -match '<scanner id="([^"]+)">') {
+                return $Matches[1]
+            }
+        }
     }
 
     return $null
@@ -395,15 +425,15 @@ function New-OpenVASScan {
     $createCmd = @"
 <create_task>
   <name>$Name</name>
-  <target id="$TargetId"/>
-  <config id="$configId"/>
-  <scanner id="$scannerId"/>
+  <target id='$TargetId'/>
+  <config id='$configId'/>
+  <scanner id='$scannerId'/>
 </create_task>
 "@
 
     $result = Invoke-GMP -Command $createCmd -Credentials $Credentials
 
-    if ($result -match 'id="([a-f0-9-]+)".*status="201"') {
+    if ($result -match 'status="201".*id="([a-f0-9-]+)"') {
         $taskId = $Matches[1]
         Write-Log "Task created: $taskId" -Level SUCCESS
         return $taskId
@@ -421,7 +451,7 @@ function Start-OpenVASScan {
 
     Write-Log "Starting scan..."
 
-    $result = Invoke-GMP -Command "<start_task task_id=`"$TaskId`"/>" -Credentials $Credentials
+    $result = Invoke-GMP -Command "<start_task task_id='$TaskId'/>" -Credentials $Credentials
 
     if ($result -match 'status="202"') {
         Write-Log "Scan started!" -Level SUCCESS
